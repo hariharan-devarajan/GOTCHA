@@ -5,10 +5,8 @@
 #include "elf_ops.h"
 #include <dlfcn.h>
 
-void* _dl_sym(void* handle, const char* name, void* where);
 
 gotcha_wrappee_handle_t orig_dlopen_handle;
-gotcha_wrappee_handle_t orig_dlsym_handle;
 
 static int per_binding(hash_key_t key, hash_data_t data, void *opaque KNOWN_UNUSED)
 {
@@ -49,27 +47,10 @@ static void* dlopen_wrapper(const char* filename, int flags) {
    return handle;
 }
 
-static void* dlsym_wrapper(void* handle, const char* symbol_name){
-  typeof(&dlsym_wrapper) orig_dlsym = gotcha_get_wrappee(orig_dlsym_handle);
-  struct internal_binding_t *binding;
-  int result;
-  
-  if(handle == RTLD_NEXT){
-    return _dl_sym(RTLD_NEXT, symbol_name ,__builtin_return_address(0));
-  }
-  
-  result = lookup_hashtable(&function_hash_table, (hash_key_t) symbol_name, (hash_data_t *) &binding);
-  if (result == -1)
-     return orig_dlsym(handle, symbol_name);
-  else
-     return binding->user_binding->wrapper_pointer;
-}
-
 struct gotcha_binding_t dl_binds[] = {
-  {"dlopen", dlopen_wrapper, &orig_dlopen_handle},
-  {"dlsym", dlsym_wrapper, &orig_dlsym_handle}
+  {"dlopen", dlopen_wrapper, &orig_dlopen_handle}
 };     
 void handle_libdl(){
-  gotcha_wrap(dl_binds, 2, "gotcha");
+  gotcha_wrap(dl_binds, 1, "gotcha");
 }
 
