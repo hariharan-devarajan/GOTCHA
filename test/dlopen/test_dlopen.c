@@ -17,6 +17,8 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 #include <stdio.h>
 #include "gotcha/gotcha.h"
 
+# define RTLD_NEXT	((void *) -1l)
+# define RTLD_DEFAULT	((void *) 0)
 #define Q(x) #x
 #define QUOTE(x) Q(x)
 
@@ -82,6 +84,18 @@ int main()
       fprintf(stderr, "ERROR: call to return_five in libnum.so was not wrapped by correct_return_five\n");
       had_error = -1;
    }
+    /* Test 2: Does a call in a dlopen'd library get rerouted by gotcha */
+    test_retfive = (int (*)(void)) dlsym(RTLD_NEXT, "return_five");
+    if (test_retfive != NULL) {
+        fprintf(stderr, "ERROR: call to return_five should not be found in RTLD_NEXT\n");
+        had_error = -1;
+    }
+    /* Test 2: Does a call in a dlopen'd library get rerouted by gotcha */
+    test_retfive = (int (*)(void)) dlsym(RTLD_DEFAULT, "return_five");
+    if (test_retfive == NULL || test_retfive() !=5) {
+        fprintf(stderr, "ERROR: call to return_five should be found in RTLD_NEXT\n");
+        had_error = -1;
+    }
 
    return had_error;
 }

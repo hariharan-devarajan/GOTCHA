@@ -5,7 +5,112 @@
 #include "elf_ops.h"
 #include <dlfcn.h>
 
+#if defined(__GLIBC__) && __GLIBC__ >= 2 && __GLIBC_MINOR__ < 34
 void* _dl_sym(void* handle, const char* name, void* where);
+#else
+struct Addrs {
+    ElfW(Addr) library_laddr;
+    ElfW(Addr) lookup_addr;
+};
+int lib_header_callback(struct dl_phdr_info * info, size_t size, void * data) {
+    struct Addrs* addrs = data;
+    ElfW(Addr) end_addr = 0;
+    for (int i=0;i<info->dlpi_phnum;++i) {
+        ElfW(Addr) size = info->dlpi_phdr[i].p_vaddr + info->dlpi_phdr[i].p_memsz;
+        if (end_addr < size) end_addr = size;
+    }
+    ElfW(Phdr) dlpi_phdr = info->dlpi_phdr[PT_PHDR];
+    ElfW(Addr) base_addr = info->dlpi_addr;
+    ElfW(Addr) end_phdr = base_addr + end_addr;
+    if (base_addr <= addrs->lookup_addr && end_phdr >= addrs->lookup_addr)
+        addrs->library_laddr = base_addr;
+    return 0;
+}
+/**
+ * This function looks for all symbols defined in rela or rel.
+ *
+ * @param name, symbol name
+ * @param lmap, library where we search for symbol.
+ * @return symbol pointer
+ */
+void *dl_lookup_symbol_x(const char *name, struct link_map *lmap) {
+    INIT_DYNAMIC(lmap)
+    ElfW(Addr) offset = lmap->l_addr;
+    (void) offset;
+    if (is_rela) {
+        rela = (ElfW(Rela) *) jmprel;
+        for (i = 0; i < rel_count; i++) {
+          ElfW(Addr) offset = rela[i].r_offset;
+          unsigned long symidx = R_SYM(rela[i].r_info);
+          ElfW(Sym) *sym = symtab + symidx;
+          char *symname = strtab + sym->st_name;
+          if (strcmp(symname, name) == 0) {
+            void **sym_ptr = (void **) (lmap->l_addr + offset);
+            return *sym_ptr;
+          }
+       }
+    } else {
+        rel = (ElfW(Rel) *) jmprel;
+        for (i = 0; i < rel_count; i++) {
+            ElfW(Addr) offset = rel[i].r_offset;
+            unsigned long symidx = R_SYM(rel[i].r_info);
+            ElfW(Sym) *sym = symtab + symidx;
+            char *symname = strtab + sym->st_name;
+            if (strcmp(symname, name) == 0) {
+                void **sym_ptr = (void **) (lmap->l_addr + offset);
+                return *sym_ptr;
+            }
+        }
+    }
+    return NULL;
+}
+
+/**
+ * Implement the logic of _dl_sym
+ * 1. find the caller library using the program headers.
+ * 2. find the first library which has the symbol for RTLD_DEFAULT
+ * 3. find the second library which has the symbol for RTLD_NEXT
+ * @param handle, handle for dl operation
+ * @param name, name of the symbol
+ * @param who, the virtual address of the caller
+ * @return symbol pointer
+ */
+
+static void * _dl_sym(void *handle, const char *name, void *who) {
+    ElfW(Addr) caller = (ElfW(Addr)) who;
+    /* Iterative over the library headers and find the caller
+     * the address of the caller is set in addrs->library_laddr
+     **/
+    struct Addrs addrs;
+    addrs.lookup_addr = caller;
+    dl_iterate_phdr(lib_header_callback, &addrs);
+
+    struct link_map *lib_iter;
+    int found_caller = 0;
+    int found_sym = 0;
+    for (lib_iter = _r_debug.r_map; lib_iter != 0; lib_iter = lib_iter->l_next) {
+        /* find the library of the caller */
+        if (lib_iter->l_addr == addrs.library_laddr)
+            found_caller = 1;
+        if (found_caller) {
+            /* lookup symbol on the main caller or next lib which has symbol
+             * This selection depends on RTLD_DEFAULT or RTLD_NEXT
+             **/
+            void* sym = dl_lookup_symbol_x(name, lib_iter);
+            if (sym != NULL ) {
+                if (handle == RTLD_DEFAULT) {
+                    return sym;
+                } else if (found_sym && handle == RTLD_NEXT){
+                    return sym;
+                }
+                found_sym = 1;
+            }
+        }
+    }
+    return NULL;
+}
+
+#endif
 
 gotcha_wrappee_handle_t orig_dlopen_handle;
 gotcha_wrappee_handle_t orig_dlsym_handle;
@@ -61,7 +166,7 @@ static void* dlsym_wrapper(void* handle, const char* symbol_name){
   if(handle == RTLD_DEFAULT) {
     return _dl_sym(RTLD_DEFAULT, symbol_name,__builtin_return_address(0));
   }
-  
+
   result = lookup_hashtable(&function_hash_table, (hash_key_t) symbol_name, (hash_data_t *) &binding);
   if (result == -1)
      return orig_dlsym(handle, symbol_name);
