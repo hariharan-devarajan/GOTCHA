@@ -34,7 +34,7 @@ jobs:
       - name: Install additional packages
         run: |
           sudo apt-get update
-          sudo apt-get install cmake
+          sudo apt-get install cmake gcovr
 
       - name: Configure and Build
         run: |
@@ -43,9 +43,10 @@ jobs:
       - name: Unit Tests
         run: |
           ctest --test-dir build -VV
-
-      - name: Generate a code coverage report
-        uses: threeal/gcovr-action@latest
-        with:
-          excludes: |
-            test/*
+      - name: Create Coverage
+        run : |
+          cd build
+          gcovr -r ../ . --json-summary coverage.json
+      - name: Update Coverage Badge
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        uses: we-cli/coverage-badge-action@main
