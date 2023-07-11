@@ -38,17 +38,14 @@ jobs:
 
       - name: Configure and Build
         run: |
-          mkdir build
-          pushd build
-          cmake -DGOTCHA_ENABLE_TESTS=ON ..
-          make V=1
-          popd
+          cmake . -B build -DGOTCHA_ENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=PROFILE
+          cmake --build build
       - name: Unit Tests
         run: |
-          cd build && ctest -VV
+          ctest --test-dir build -VV
 
-      - name: After failure
-        if: ${{ failure() }}
-        run: |
-          cat $GITHUB_WORKSPACE/config.log
-          cat $GITHUB_WORKSPACE/t/test-suite.log
+      - name: Generate a code coverage report
+        uses: threeal/gcovr-action@latest
+        with:
+          excludes: |
+            test/*
